@@ -1,0 +1,11 @@
+{
+	"id": "fullcalendar-plugin",
+	"name": "Fullcalendar Plugin",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "fullcalendar.",
+	"author": "purunekocat",
+	"authorUrl": "",
+	"fundingUrl": "",
+	"isDesktopOnly": false
+}

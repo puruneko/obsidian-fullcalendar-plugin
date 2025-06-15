@@ -1,0 +1,19 @@
+/*
+
+This CSS file will be included with your plugin, and
+available in the app when your plugin is enabled.
+
+If your plugin does not need CSS, delete this file.
+
+*/
+
+body {
+	color: red !important;
+}
+
+.mymymy {
+	/* height: 80vh; */
+	/* min-height: none; */
+	/* width: 80vw; */
+	max-width: 90vw;
+}
