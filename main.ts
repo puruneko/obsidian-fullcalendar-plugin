@@ -156,18 +156,24 @@ export default class MyPlugin extends Plugin {
 				const slotDuration = "00:30:00"; // 週表示した時の時間軸の単位。
 				const slotMinTime = "07:00:00";
 				const slotMaxTime = "21:00:00";
-				const slotHeight = 20;
-				const calendarHeight = 14 * 2 * slotHeight;
 
+				//
+				//wrapper settings
 				//
 				const calendarEl = document.createElement("div");
 				calendarEl.addClass("mymymy");
-				// calendarEl.style.zIndex = "2";
 				calendarEl.addEventListener("dragover", (e) => {
 					e.preventDefault();
 				});
 				calendarEl.addEventListener("drop", this.onDrop.bind(this));
+				//
 				parentElement.appendChild(calendarEl);
+				const resizeObserver = new ResizeObserver(() => {
+					this.calendar.updateSize(); // ← 高さ・幅を再計算して再描画
+				});
+				resizeObserver.observe(parentElement);
+				//
+				// eventcontent in calendar
 				//
 				const eventContent = (arg: any) => {
 					const file = arg.event.extendedProps.file;
@@ -197,10 +203,6 @@ export default class MyPlugin extends Plugin {
 					container.appendChild(link);
 					return { domNodes: [container] };
 				};
-
-				//
-				//
-
 				//
 				//event drag handler
 				//
@@ -236,29 +238,20 @@ export default class MyPlugin extends Plugin {
 						}
 					);
 				};
-
 				//
-
-				/*
-				const handleElementDroppedOnCalendar = (
-					dropinfo: DropArg | any
-				) => {
-					//
-				};
-				*/
-
+				// init calendar
 				//
 				this.calendar = new Calendar(calendarEl, {
-					height: "auto", //`${calendarHeight * 2}px`,
+					height: "auto",
 					//
+					themeSystem: "startdard",
 					plugins: [timeGridPlugin, dayGridPlugin, interactionPlugin],
 					headerToolbar: {
-						left: "customRefresh",
-						center: "dayGridMonth, timeGridWeek", // buttons for switching between views
+						center: "customRefresh,dayGridMonth,timeGridWeek", // buttons for switching between views
 					},
 					customButtons: {
 						customRefresh: {
-							text: "🔄再読み込み",
+							text: "🔄reload",
 							click: () => {
 								this.rerendarCalendar.bind(this)(
 									"customRefreshButton"
@@ -279,6 +272,7 @@ export default class MyPlugin extends Plugin {
 					},
 					locale: "ja", // ロケール設定。
 					initialView: "timeGridWeek",
+					nowIndicator: true,
 					//stickyHeaderDates: true,
 					//aspectRatio: 0.7,
 					//
@@ -399,7 +393,6 @@ export default class MyPlugin extends Plugin {
 						? meta.cache
 						: this.app.metadataCache.getFileCache(meta.file); //念のため
 				const { file, cache, content } = meta;
-				const lines = content.split("\n");
 				const headings = cache?.headings ?? []; // 見出し情報を取得（ない場合は空配列）
 				const listItems = cache?.listItems ?? []; // リスト項目情報を取得（ない場合は空配列）
 
@@ -417,14 +410,6 @@ export default class MyPlugin extends Plugin {
 				return sTasksInPage;
 			})
 			.flat();
-		/*
-				//@ts-ignore
-				const sTasks = pageContents
-					.map((pageContent) => {
-						return this.extractScheduledTasks(pageContent, "⏳");
-					})
-					.flat();
-				*/
 		console.log("<<< getSTasks", sTasks);
 		return sTasks;
 	}
