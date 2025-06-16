@@ -1,9 +1,9 @@
 {
-	"id": "fullcalendar-plugin",
-	"name": "Fullcalendar Plugin",
+	"id": "my-fullcalendar-plugin",
+	"name": "My Fullcalendar Plugin",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "fullcalendar.",
+	"description": "my custom fullcalendar.",
 	"author": "purunekocat",
 	"authorUrl": "",
 	"fundingUrl": "",

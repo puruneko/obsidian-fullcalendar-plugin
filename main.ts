@@ -11,10 +11,17 @@ import {
 	TFile,
 } from "obsidian";
 //
-import { Calendar, EventApi, EventDropArg } from "@fullcalendar/core";
+import {
+	Calendar,
+	DateSelectArg,
+	EventApi,
+	EventDropArg,
+} from "@fullcalendar/core";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin, {
+	Draggable,
+	DropArg,
 	EventDragStopArg,
 	EventResizeDoneArg,
 } from "@fullcalendar/interaction";
@@ -53,9 +60,12 @@ export default class MyPlugin extends Plugin {
 		);
 	};
 	emoji = "⏳";
+	obisidianLastClickedEvent: any = null;
 
 	async onload() {
 		await this.loadSettings();
+
+		//
 
 		// This creates an icon in the left ribbon.
 		const ribbonIconEl = this.addRibbonIcon(
@@ -118,11 +128,17 @@ export default class MyPlugin extends Plugin {
 		// Using this function will automatically remove the event listener when this plugin is disabled.
 		this.registerDomEvent(document, "click", (evt: MouseEvent) => {
 			console.log("click", evt);
+			//クリックされたときのイベントオブジェクトを取っておく
+			this.obisidianLastClickedEvent = evt;
+
+			//this.rerendarCalendar.bind(this)("this.registerDomEvent");
 		});
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(
-			window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000)
+			window.setInterval(() => {
+				//console.log("setInterval");
+			}, 5 * 1000)
 		);
 
 		//
@@ -133,139 +149,27 @@ export default class MyPlugin extends Plugin {
 		/**
 		 * コードブロックの定義（サンプル）
 		 */
-		/*
 		this.registerMarkdownCodeBlockProcessor(
 			"mymymy",
-			async (source, element, context) => {
-				const container = element.createEl("div");
-				container.addClass("mymymy");
-				//コードブロックのレンダリング後の文字列
-				//container.innerText = `Hello, ${source}!`;
-				this.calendar = ObsCalendar(container);
-				//container.appendChild
-			}
-		);*/
-		this.registerMarkdownCodeBlockProcessor(
-			"mymymy",
-			async (source, el) => {
+			async (source, parentElement) => {
 				//
 				const slotDuration = "00:30:00"; // 週表示した時の時間軸の単位。
 				const slotMinTime = "07:00:00";
 				const slotMaxTime = "21:00:00";
+				const slotHeight = 20;
+				const calendarHeight = 14 * 2 * slotHeight;
+
 				//
-				//const tasks = await this.loadDueTasksFromPage("__test__");
-				//const pageContent = await this.loadPage("__test__");
-				const files = this.app.vault.getMarkdownFiles();
-				const pageContents = await Promise.all(
-					files.map((file) => {
-						return this.app.vault.read(file);
-					})
-				);
-				const metas = files.reduce((dict, file, i) => {
-					const filename: string = file.basename;
-					dict[filename] = {
-						file,
-						cache: this.app.metadataCache.getFileCache(file),
-						content: pageContents[i],
-					};
-					return dict;
-				}, {} as { [key: string]: any });
-				console.log("metas:", metas);
-				const sTasks = Object.keys(metas)
-					.map((filename: string) => {
-						const { file, cache, content } = metas[filename];
-						const lines = content.split("\n");
-						const headings = cache?.headings ?? []; // 見出し情報を取得（ない場合は空配列）
-						const listItems = cache?.listItems ?? []; // リスト項目情報を取得（ない場合は空配列）
-
-						const sTasksInPage = listItems
-							.map((item: any) => {
-								let sTask = {};
-								// 各リスト項目を順に処理
-								if (item.task && !item.checked) {
-									const header = this.findNearestHeader(
-										item.position.start.line,
-										headings
-									); // 最も近い見出しを取得
-									const link = this.createHeaderLink(
-										filename,
-										header
-									); // ヘッダーへのリンクを生成
-									// タスクであり、未完了のものに限定
-									const linetext = content.slice(
-										item.position.start.offset,
-										item.position.end.offset
-									); // 対応する行のテキストを取得
-									const st = this.extractScheduledTasks(
-										linetext,
-										this.emoji
-									);
-									if (st && st.length > 0) {
-										sTask = {
-											...st[0],
-											linetext,
-											header,
-											link,
-											file,
-											filename: file.basename,
-											position: item.position,
-										};
-									}
-
-									console.log(`タスク:`, sTask); // タスクの内容を出力
-									console.log(`→ 属する見出し: ${header}`);
-									console.log(`→ ヘッダーリンク: ${link}`);
-								}
-								return Object.keys(sTask).length > 0
-									? sTask
-									: null;
-							})
-							.filter((a: any) => a !== null);
-						return sTasksInPage;
-					})
-					.flat();
-				/*
-				//@ts-ignore
-				const sTasks = pageContents
-					.map((pageContent) => {
-						return this.extractScheduledTasks(pageContent, "⏳");
-					})
-					.flat();
-				*/
-				console.log("sTasks", sTasks);
-
 				const calendarEl = document.createElement("div");
 				calendarEl.addClass("mymymy");
-				el.appendChild(calendarEl);
-
-				const debugEl = document.createElement("p");
-				debugEl.innerText = [
-					sTasks
-						.map((t) => {
-							return `${t.text}__${t.dateRange.start}_${t.dateRange.end}`;
-						})
-						.join("||||"),
-					"EOF",
-				].join("===");
-				el.appendChild(debugEl);
+				// calendarEl.style.zIndex = "2";
+				calendarEl.addEventListener("dragover", (e) => {
+					e.preventDefault();
+				});
+				calendarEl.addEventListener("drop", this.onDrop.bind(this));
+				parentElement.appendChild(calendarEl);
 				//
 				const eventContent = (arg: any) => {
-					//<span class="cm-hmd-internal-link"><a class="cm-underline" tabindex="-1" href="#">calendar(test)</a></span>
-					//arg.event.extendedProps.description
-					/*
-					const container = document.createElement("span");
-
-					container.classList.add("cm-hmd-internal-link");
-
-					const title = document.createElement("a");
-					title.textContent = String(arg.event.title)
-						.replace("[[", "")
-						.replace("]]", "");
-					title.classList.add("cm-underline");
-					title.href = "#";
-
-					container.appendChild(title);*/
-
 					const file = arg.event.extendedProps.file;
 					const position = arg.event.extendedProps.position;
 
@@ -286,12 +190,9 @@ export default class MyPlugin extends Plugin {
 							}
 						});
 					};
-					//const href = "#"; //`obsidian://open?file=${encodeURIComponent(filename)}&heading=${encodeURIComponent(header)}`;
-					//console.log("href:", href, arg.event.title);
-					//link.href = href;
 					link.textContent = arg.event.title;
 					link.classList.add("fc-internal-link");
-					link.addEventListener("click", jump);
+					link.addEventListener("click", jump.bind(this));
 
 					container.appendChild(link);
 					return { domNodes: [container] };
@@ -303,88 +204,67 @@ export default class MyPlugin extends Plugin {
 				//
 				//event drag handler
 				//
-				const moveCalenderEvent = async (
-					info: EventDropArg | EventDragStopArg | EventResizeDoneArg
-				) => {
-					//allDay処理
-					if ("delta" in info && "oldEvent" in info) {
-						const delta = info.delta as {
-							days: number;
-							milliseconds: number;
-							months: number;
-							years: number;
-						};
-						const oldEvent = info.oldEvent as EventApi;
-						//allDayから時間枠のあるイベントに変更の場合の処理
-						//暫定で時間枠は１時間とする
-						if (
-							oldEvent.allDay &&
-							delta.milliseconds &&
-							info.event.start
-						) {
-							const defaultEventTimeFlame = 1000 * 60 * 60 * 1;
-							info.event.setEnd(
-								new Date(
-									info.event.start.getTime() +
-										defaultEventTimeFlame
-								)
-							);
-						}
-					}
-					const fcEvent = info.event;
-					const start = toDatePropsFromDate(
-						this.getCEventInfoProps(fcEvent, "start")
-					);
-					const end = toDatePropsFromDate(
-						this.getCEventInfoProps(fcEvent, "end")
-					);
-					if (start && end) {
-						const s = `${toDateStringFromDateProps(start)}${
-							DATETIME_CONSTANT.DATERANGE_SPARATOR_STR
-						}${toDateStringFromDateProps(end)}`;
-
-						const taskRegExp = this.getScheduledTaskRegExp(
-							this.emoji
-						);
-						const linetext = this.getCEventInfoProps(
-							fcEvent,
-							"linetext"
-						);
-						const newLinetext = linetext.replace(
-							taskRegExp,
-							`$1$2$3$4$5$6${s}`
-						);
-						//
-						const file = this.getCEventInfoProps(fcEvent, "file");
-						let content = await this.app.vault.read(file);
-						const position = this.getCEventInfoProps(
-							fcEvent,
-							"position"
-						);
-						content = `${content.slice(
-							0,
-							position.start.offset
-						)}${newLinetext}${content.slice(position.end.offset)}`;
-						// ファイルを上書き保存
-						await this.app.vault.modify(file, content);
-					}
-				};
 				const handleCalenderEventResized = (
 					info: EventResizeDoneArg
 				) => {
-					moveCalenderEvent(info);
+					this.onMoveCalenderEvent.bind(this)(info);
 				};
 				const handleCalenderEventDragged = (info: EventDropArg) => {
-					moveCalenderEvent(info);
+					this.onMoveCalenderEvent.bind(this)(info);
 				};
 
 				//
-				const calendar = new Calendar(calendarEl, {
-					//height: "120vh",
+
+				const handleCalenderSelect = (selection: DateSelectArg) => {
+					const dateRangeString = `${
+						this.emoji
+					} ${toDateStringFromDateRange({
+						...selection,
+					})}`;
+					if (!navigator.clipboard) {
+						alert("残念。このブラウザは対応していません...");
+						return;
+					}
+
+					navigator.clipboard.writeText(dateRangeString).then(
+						() => {
+							//alert(`コピー成功👍:${dateRangeString}`);
+							new Notice(`コピー成功\n${dateRangeString}`);
+						},
+						() => {
+							alert("コピー失敗😭");
+						}
+					);
+				};
+
+				//
+
+				/*
+				const handleElementDroppedOnCalendar = (
+					dropinfo: DropArg | any
+				) => {
+					//
+				};
+				*/
+
+				//
+				this.calendar = new Calendar(calendarEl, {
+					height: "auto", //`${calendarHeight * 2}px`,
 					//
 					plugins: [timeGridPlugin, dayGridPlugin, interactionPlugin],
 					headerToolbar: {
+						left: "customRefresh",
 						center: "dayGridMonth, timeGridWeek", // buttons for switching between views
+					},
+					customButtons: {
+						customRefresh: {
+							text: "🔄再読み込み",
+							click: () => {
+								this.rerendarCalendar.bind(this)(
+									"customRefreshButton"
+								);
+							},
+						},
 					},
 					views: {
 						dayGridMonth: {
@@ -399,7 +279,7 @@ export default class MyPlugin extends Plugin {
 					},
 					locale: "ja", // ロケール設定。
 					initialView: "timeGridWeek",
-					stickyHeaderDates: true,
+					//stickyHeaderDates: true,
 					//aspectRatio: 0.7,
 					//
 					slotDuration,
@@ -427,25 +307,36 @@ export default class MyPlugin extends Plugin {
 					droppable: true,
 					dropAccept: "*",
 					//event handler
-					eventResize: handleCalenderEventResized,
-					eventDrop: handleCalenderEventDragged,
-					//select:handleCalenderSelect,
-					//drop:handleElementDroppedOnCalendar,
-					//eventReceive:andleElementDroppedOnCalendar,
+					eventResize: handleCalenderEventResized.bind(this),
+					eventDrop: handleCalenderEventDragged.bind(this),
 					//
-					events: sTasks.map((task) => ({
-						...task,
-						title: task.text,
-						start: task.dateRange.start || undefined,
-						end: task.dateRange.end || undefined,
-						allDay: !task.dateRange.end,
-					})),
+					select: handleCalenderSelect.bind(this),
+					//drop: handleElementDroppedOnCalendar.bind(this),
+					//eventReceive: handleElementDroppedOnCalendar.bind(this),
+					//
+					events: this.fetchEvents.bind(this), //sTasks,
 					eventContent,
 				});
 
-				calendar.render();
+				this.calendar.render();
 			}
 		);
+	}
+
+	async fetchEvents() {
+		console.log(">>> fetchEvents");
+		const sTasks = await this.getSTasks.bind(this)();
+		console.log("<<< fetchEvents:", sTasks);
+		return sTasks;
+	}
+
+	async rerendarCalendar(from: any = undefined) {
+		console.log(">>> rerendarCalendar", from);
+		if (this.calendar) {
+			this.calendar.refetchEvents();
+			this.calendar.render();
+		}
+		console.log("<<< rerendarCalendar:");
 	}
 
 	getCEventInfoProps = (cEventInfoObj: any, propname: string) => {
@@ -479,6 +370,107 @@ export default class MyPlugin extends Plugin {
 
 	editLine(line: string, edit: any) {}
 
+	async getSTasks() {
+		console.log(">>> getSTasks");
+		//
+		//const tasks = await this.loadDueTasksFromPage("__test__");
+		//const pageContent = await this.loadPage("__test__");
+		const files = this.app.vault.getMarkdownFiles();
+		const pageContents = await Promise.all(
+			files.map((file) => {
+				return this.app.vault.read(file);
+			})
+		);
+		const metas = files.reduce((dict, file, i) => {
+			const filename: string = file.basename;
+			dict[filename] = {
+				file,
+				cache: this.app.metadataCache.getFileCache(file),
+				content: pageContents[i],
+			};
+			return dict;
+		}, {} as { [key: string]: any });
+		console.log("metas:", metas);
+		const sTasks = Object.keys(metas)
+			.map((filename: string) => {
+				const meta = metas[filename];
+				meta.cache =
+					meta.cache !== null
+						? meta.cache
+						: this.app.metadataCache.getFileCache(meta.file); //念のため
+				const { file, cache, content } = meta;
+				const lines = content.split("\n");
+				const headings = cache?.headings ?? []; // 見出し情報を取得（ない場合は空配列）
+				const listItems = cache?.listItems ?? []; // リスト項目情報を取得（ない場合は空配列）
+
+				const sTasksInPage = listItems
+					.map((item: any) => {
+						let sTask = this.createSTask(
+							item,
+							headings,
+							file,
+							content
+						);
+						return Object.keys(sTask).length > 0 ? sTask : null;
+					})
+					.filter((a: any) => a !== null);
+				return sTasksInPage;
+			})
+			.flat();
+		/*
+				//@ts-ignore
+				const sTasks = pageContents
+					.map((pageContent) => {
+						return this.extractScheduledTasks(pageContent, "⏳");
+					})
+					.flat();
+				*/
+		console.log("<<< getSTasks", sTasks);
+		return sTasks;
+	}
+
+	createSTask(item: any, headings: any, file: any, content: string) {
+		let sTask: any = {};
+		// 各リスト項目を順に処理
+		if (item.task && !item.checked) {
+			const header = this.findNearestHeader(
+				item.position.start.line,
+				headings
+			); // 最も近い見出しを取得
+			const link = this.createHeaderLink(file.basename, header); // ヘッダーへのリンクを生成
+			// タスクであり、未完了のものに限定
+			const linetext = content.slice(
+				item.position.start.offset,
+				item.position.end.offset
+			); // 対応する行のテキストを取得
+			const st = this.extractScheduledTasks(linetext, this.emoji);
+			const { text, dateRange } =
+				st && st.length > 0
+					? st[0]
+					: { text: undefined, dateRange: undefined };
+			sTask = {
+				text,
+				dateRange,
+				linetext,
+				header,
+				link,
+				file,
+				filename: file.basename,
+				position: item.position,
+				title: text,
+				start: dateRange?.start || undefined,
+				end: dateRange?.end || undefined,
+				allDay: !dateRange?.end,
+			};
+
+			console.debug(`タスク:`, sTask); // タスクの内容を出力
+			console.debug(`→ 属する見出し: ${header}`);
+			console.debug(`→ ヘッダーリンク: ${link}`);
+			console.debug(`→ st: ${st}`);
+		}
+		return sTask;
+	}
+
 	extractScheduledTasks(content: string, emoji: string) {
 		const taskRegExp = this.getScheduledTaskRegExp(emoji);
 		return content
@@ -497,9 +489,9 @@ export default class MyPlugin extends Plugin {
 						tagSpace,
 						tagValue,
 					] = match;
-					console.log("[text, value]", text, tagValue);
+					console.debug("[text, value]", text, tagValue);
 					const dateRange = toDateRangeFromDateString(tagValue);
-					console.log("dateRange", dateRange);
+					console.debug("dateRange", dateRange);
 					return { text, dateRange };
 				}
 				return null;
@@ -522,6 +514,195 @@ export default class MyPlugin extends Plugin {
 		// ヘッダーがあればヘッダーへのリンク、なければページへのリンク
 		return header ? `[[${fileName}#${header}]]` : `[[${fileName}]]`;
 	}
+
+	async onDrop(e: any) {
+		e.preventDefault();
+		const file = this.app.workspace.getActiveFile();
+		console.log("calendarEl.drop", e, this.obisidianLastClickedEvent, file);
+		//drop from external
+		if (!this.obisidianLastClickedEvent) {
+			console.log("obisidianLastClickedEvent not found");
+			return;
+		}
+		let timeAtDropped = "";
+		let dateAtDropped = "";
+		const plist = document.elementsFromPoint(e.clientX, e.clientY);
+		Array.from(plist).forEach((elem: HTMLElement) => {
+			if (
+				timeAtDropped === "" &&
+				elem.hasClass("fc-timegrid-slot") &&
+				elem.dataset.time
+			) {
+				timeAtDropped = elem.dataset.time;
+			}
+			if (
+				dateAtDropped === "" &&
+				elem.hasClass("fc-timegrid-col") &&
+				elem.dataset.date
+			) {
+				dateAtDropped = elem.dataset.date;
+			}
+		});
+		console.log("timeAtDropped,dateAtDropped:", {
+			timeAtDropped,
+			dateAtDropped,
+		});
+		if (timeAtDropped !== "" && dateAtDropped !== "") {
+			//
+			const startDate = new Date(`${dateAtDropped}T${timeAtDropped}`);
+			const endDate = new Date(startDate.getTime() + 1 * 60 * 60 * 1000);
+			const dateRange = { start: startDate, end: endDate };
+			const dateRangeStr = toDateStringFromDateRange(dateRange);
+			//
+			const droppingElement: HTMLElement =
+				this.obisidianLastClickedEvent.target;
+			const text = droppingElement.innerText;
+			//
+			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+			const editor = view?.editor;
+			const file = view?.file;
+			if (editor && file) {
+				const selectedRange = {
+					from: editor.getCursor("from"),
+					to: editor.getCursor("to"),
+				};
+				const selectedPosition = {
+					start: {
+						...selectedRange.from,
+						offset: editor.posToOffset(selectedRange.from),
+					},
+					end: {
+						...selectedRange.to,
+						offset: editor.posToOffset(selectedRange.to),
+					},
+				};
+				console.debug("選択されたposition:", selectedPosition);
+				//
+				const cache = this.app.metadataCache.getFileCache(file);
+				const content = await this.app.vault.read(file);
+				const headings = cache?.headings ?? []; // 見出し情報を取得（ない場合は空配列）
+				const listItems = cache?.listItems ?? []; // リスト項目情報を取得（ない場合は空配列）
+				const sTasks = listItems
+					.map((item) => {
+						console.debug(
+							`(${item.position.start.offset} <= ${selectedPosition.start.offset} && ${selectedPosition.start.offset} <= ${item.position.end.offset}) || (${item.position.start.offset} <= ${selectedPosition.end.offset} && ${selectedPosition.start.offset} <= ${item.position.end.offset})`
+						);
+						if (
+							(item.position.start.offset <=
+								selectedPosition.start.offset &&
+								selectedPosition.start.offset <=
+									item.position.end.offset) ||
+							(item.position.start.offset <=
+								selectedPosition.end.offset &&
+								selectedPosition.start.offset <=
+									item.position.end.offset)
+						) {
+							return this.createSTask(
+								item,
+								headings,
+								file,
+								content
+							);
+						}
+						return null;
+					})
+					.filter((i) => i !== null);
+				console.log("dropped sTasks:", sTasks);
+
+				let newContent = content;
+				sTasks
+					.sort(
+						(a, b) => b.position.end.offset - a.position.end.offset
+					)
+					.forEach((sTask) => {
+						/*
+									calendar.addEvent({
+										...sTask,
+										title: text,
+										start: dateRange?.start || undefined,
+										end: dateRange?.end || undefined,
+										allDay: !dateRange?.end,
+									});
+									*/
+
+						newContent = `${newContent.slice(
+							0,
+							sTask.position.end.offset
+						)} ${this.emoji} ${dateRangeStr}${newContent.slice(
+							sTask.position.end.offset
+						)}`;
+					});
+				// ファイルを上書き保存
+				await this.app.vault.modify(file, newContent);
+
+				/*
+						const text = droppingElement.innerText
+						const sTask = {
+							...st[0],
+							linetext,
+							header,
+							link,
+							file,
+							filename: file?.basename || "",
+							position: item.position,
+						};
+						*/
+			}
+		}
+	}
+
+	onMoveCalenderEvent = async (
+		info: EventDropArg | EventDragStopArg | EventResizeDoneArg
+	) => {
+		//allDay処理
+		if ("delta" in info && "oldEvent" in info) {
+			const delta = info.delta as {
+				days: number;
+				milliseconds: number;
+				months: number;
+				years: number;
+			};
+			const oldEvent = info.oldEvent as EventApi;
+			//allDayから時間枠のあるイベントに変更の場合の処理
+			//暫定で時間枠は１時間とする
+			if (oldEvent.allDay && delta.milliseconds && info.event.start) {
+				const defaultEventTimeFlame = 1000 * 60 * 60 * 1;
+				info.event.setEnd(
+					new Date(info.event.start.getTime() + defaultEventTimeFlame)
+				);
+			}
+		}
+		const fcEvent = info.event;
+		const start = toDatePropsFromDate(
+			this.getCEventInfoProps(fcEvent, "start")
+		);
+		const end = toDatePropsFromDate(
+			this.getCEventInfoProps(fcEvent, "end")
+		);
+		if (start && end) {
+			const s = `${toDateStringFromDateProps(start)}${
+				DATETIME_CONSTANT.DATERANGE_SPARATOR_STR
+			}${toDateStringFromDateProps(end)}`;
+
+			const taskRegExp = this.getScheduledTaskRegExp(this.emoji);
+			const linetext = this.getCEventInfoProps(fcEvent, "linetext");
+			const newLinetext = linetext.replace(
+				taskRegExp,
+				`$1$2$3$4$5$6${s}`
+			);
+			//
+			const file = this.getCEventInfoProps(fcEvent, "file");
+			let content = await this.app.vault.read(file);
+			const position = this.getCEventInfoProps(fcEvent, "position");
+			content = `${content.slice(
+				0,
+				position.start.offset
+			)}${newLinetext}${content.slice(position.end.offset)}`;
+			// ファイルを上書き保存
+			await this.app.vault.modify(file, content);
+			this.rerendarCalendar("onMoveCalenderEvent");
+		}
+	};
 	//
 	//
 	//

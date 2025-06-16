@@ -10,10 +10,49 @@ If your plugin does not need CSS, delete this file.
 body {
 	color: red !important;
 }
+.block-language-mymymy {
+	display: block;
+	padding: 0;
+	height: auto !important;
+	width: auto !important;
+	/* overflow-x: scroll !important; */
+	/* overflow-y: scroll !important; */
+	overflow: visible;
+}
 
 .mymymy {
-	/* height: 80vh; */
-	/* min-height: none; */
-	/* width: 80vw; */
-	max-width: 90vw;
+	/* height: auto !important; */
+	/* max-height: none !important; */
+	/* overflow-y: visible !important; */
+	display: block;
+	height: auto;
+	overflow-y: visible;
+	width: 100%;
+	overflow-x: auto;
+}
+/* FullCalendar 自体のサイズ調整 */
+.mymymy .fc {
+	/* min-width: 800px; 必要に応じて調整 */
+	/* height: auto !important; */
+	height: auto !important;
+	min-width: 50vw;
+	width: 100% !important; /* wrapper にフィットさせる */
+	/* overflow-x: scroll !important; */
+	/* overflow-y: scroll !important; */
+}
+
+/* FullCalendar のスクロール領域を無効化 */
+.fc-scroller,
+.fc-timegrid-body,
+.fc-timegrid-slots {
+	overflow-y: hidden !important;
+	height: auto !important;
+	max-height: none !important;
+}
+.fc-timegrid-col {
+	width: auto !important;
+}
+
+.fc-scrollgrid-section-header {
+	word-wrap: break-word;
 }

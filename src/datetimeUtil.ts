@@ -127,7 +127,9 @@ export const toDateStringFromDateRange = (dateRange: {
 		dateRange.start.getTime() !== dateRange.end.getTime()
 	) {
 		d = toDatePropsFromDate(dateRange.end);
-		endStr = `~${toDateStringFromDateProps(d)}`; //`~${d.year}-${d.month}-${d.day}T${d.hour}:${d.minute}`
+		endStr = `${
+			DATETIME_CONSTANT.DATERANGE_SPARATOR_STR
+		}${toDateStringFromDateProps(d)}`; //`~${d.year}-${d.month}-${d.day}T${d.hour}:${d.minute}`
 	}
 	const dateHashtagValue = `${startStr}${endStr}`;
 	return dateHashtagValue;
