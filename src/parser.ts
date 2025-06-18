@@ -1,12 +1,12 @@
 // タグ接頭辞ごとの構成設定
-const TAG_PREFIXES: Record<
-	string,
-	{
-		requireSpace: boolean;
-		label: string;
-		description: string;
-	}
-> = {
+type T_TagSetting = {
+	requireSpace: boolean;
+	label: string;
+	description: string;
+};
+type T_TagSettings = Record<string, T_TagSetting>;
+
+const DEFAULT_TAG_SETTINGS: T_TagSettings = {
 	"#": {
 		requireSpace: false,
 		label: "ハッシュタグ",
@@ -28,8 +28,9 @@ const TAG_PREFIXES: Record<
 // escape用ユーティリティ
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/*del *
 // タグユニット（prefix + スペース + 本体）パターン
-const TAG_UNIT_PATTERN = Object.entries(TAG_PREFIXES)
+const _TAG_UNIT_PATTERN = Object.entries(TAG_PREFIXES)
 	.map(([prefix, cfg]) => {
 		const esc = escapeRegex(prefix);
 		return cfg.requireSpace ? `${esc}\\s+[^\\s]+` : `${esc}[^\\s]+`;
@@ -37,16 +38,60 @@ const TAG_UNIT_PATTERN = Object.entries(TAG_PREFIXES)
 	.join("|");
 
 // taskText内で除外するタグprefixを動的に文字クラスに変換
-const prefixChars = Object.keys(TAG_PREFIXES).map(escapeRegex).join("");
+const _prefixChars = Object.keys(TAG_PREFIXES).map(escapeRegex).join("");
 
 // タスク行構文パターン（全文）
-const TASK_LINE_PATTERN =
+const _TASK_LINE_PATTERN =
 	`^(\\s*- \\[([ xX])\\])` + // 1: チェックボックス
 	`(\\s*)` + // 2: checkboxと本文の間
 	`([^\\n${prefixChars}]*?)` + // 3: taskText
 	`(?=(?:\\s*(?:${TAG_UNIT_PATTERN}))+|\\s*$)` + // ✅ ← ここ！タグまたは行末で終わらせる
 	`(\\s*(?:(?:${TAG_UNIT_PATTERN})\\s*)*)` + // 4: タグ列（空白付き）
 	`(.*)$`; // 5: タグの後の自由記述
+*/
+
+//
+//
+type T_TaskLineParseSettings = {
+	taskLineRegexpPattern: string;
+	taskLineRegexp: RegExp;
+	tagSettings: T_TagSettings;
+};
+const genTaskLineParseSettings = (
+	tagSettings: T_TagSettings
+): T_TaskLineParseSettings => {
+	// タグユニット（prefix + スペース + 本体）パターン
+	const tagUnitRegexpPattern = Object.entries(tagSettings)
+		.map(([prefix, cfg]) => {
+			const esc = escapeRegex(prefix);
+			return cfg.requireSpace ? `${esc}\\s+[^\\s]+` : `${esc}[^\\s]+`;
+		})
+		.join("|");
+
+	// taskText内で除外するタグprefixを動的に文字クラスに変換
+	const prefixChars = Object.keys(tagSettings).map(escapeRegex).join("");
+
+	// タスク行構文パターン（全文）
+	const taskLineRegexpPattern =
+		`^(\\s*- \\[([ xX])\\])` + // 1: チェックボックス
+		`(\\s*)` + // 2: checkboxと本文の間
+		`([^\\n${prefixChars}]*?)` + // 3: taskText
+		`(?=(?:\\s*(?:${tagUnitRegexpPattern}))+|\\s*$)` + // ✅ ← ここ！タグまたは行末で終わらせる
+		`(\\s*(?:(?:${tagUnitRegexpPattern})\\s*)*)` + // 4: タグ列（空白付き）
+		`(.*)$`; // 5: タグの後の自由記述
+
+	//
+	const taskLineRegexp = new RegExp(taskLineRegexpPattern, "u");
+
+	return {
+		taskLineRegexpPattern,
+		taskLineRegexp,
+		tagSettings,
+	};
+};
+
+const defaultTaskLineParseSettings =
+	genTaskLineParseSettings(DEFAULT_TAG_SETTINGS);
 
 // --------------------------------------------
 // パース対象の構造定義
@@ -71,14 +116,26 @@ export type T_ParsedTask = {
 // --------------------------------------------
 // 1️⃣ タスク行を分解
 // --------------------------------------------
-export function parseTaskLine(line: string): T_ParsedTask | null {
-	const regex = new RegExp(TASK_LINE_PATTERN, "u");
-	const match = line.match(regex);
+export function parseTaskLine(
+	line: string,
+	taskLineParseSettings: T_TaskLineParseSettings = defaultTaskLineParseSettings
+): T_ParsedTask | null {
+	const match = line.match(taskLineParseSettings.taskLineRegexp);
 	if (!match) return null;
 
-	const [, checkbox, checkboxState, preSpace, taskText, tagBlock, afterText] =
-		match;
-	const { tags, trailing } = extractTagsWithSpace(tagBlock);
+	const [
+		_,
+		checkbox,
+		checkboxState,
+		preSpace,
+		taskText,
+		tagBlock,
+		afterText,
+	] = match;
+	const { tags, trailing } = extractTagsWithSpace(
+		tagBlock,
+		taskLineParseSettings.tagSettings
+	);
 
 	return {
 		matchDev: match,
@@ -95,8 +152,8 @@ export function parseTaskLine(line: string): T_ParsedTask | null {
 // --------------------------------------------
 // 2️⃣ タグブロックを構造分解
 // --------------------------------------------
-function extractTagsWithSpace(tagBlock: string) {
-	const prefixGroup = Object.keys(TAG_PREFIXES).map(escapeRegex).join("");
+function extractTagsWithSpace(tagBlock: string, tagSettings: T_TagSettings) {
+	const prefixGroup = Object.keys(tagSettings).map(escapeRegex).join("");
 	const tagRegex = new RegExp(
 		`([ \\t]*)([${prefixGroup}])(\\s*)([^\\s]+)`,
 		"gu"

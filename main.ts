@@ -15,11 +15,14 @@ import {
 	CachedMetadata,
 	Pos,
 	MarkdownRenderer,
+	ListItemCache,
 } from "obsidian";
 //
 import {
 	Calendar,
 	DateSelectArg,
+	Duration,
+	DurationInput,
 	EventApi,
 	EventDropArg,
 } from "@fullcalendar/core";
@@ -41,6 +44,7 @@ import {
 	toDateStringFromDateRange,
 } from "src/datetimeUtil";
 import { parseTaskLine, rebuildTaskLine, T_ParsedTask } from "src/parser";
+import { enterMsg, exitMsg } from "src/debug";
 
 // Remember to rename these classes and interfaces!
 
@@ -64,7 +68,8 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 type T_STask = {
 	title: string;
 	linetext: string;
-	parsedLine: T_ParsedTask;
+	parsedLine: T_ParsedTask | null;
+	state: string;
 	header: any;
 	link: string;
 	file: TFile;
@@ -72,6 +77,7 @@ type T_STask = {
 	start?: Date;
 	end?: Date;
 	allDay?: boolean;
+	error: string[];
 };
 
 export default class MyPlugin extends Plugin {
@@ -263,6 +269,7 @@ export class MySidebarView extends ItemView {
 	settings: MyPluginSettings;
 	calendar: Calendar;
 	cachedCache: { [basename: string]: CachedMetadata } = {};
+	isCacheResolving: boolean = false;
 	getScheduledTaskRegExp = (emoji: string) => {
 		return new RegExp(
 			`^(-[ ]+?\\[[ ]+\\])([ ]+?)(.*?)([ ]+?)(${emoji})(\\s*)(\\S+)(\\s*\\S*)?`
@@ -296,7 +303,12 @@ export class MySidebarView extends ItemView {
 		parentElement.empty();
 		parentElement.createEl("h3", { text: "Hello from the right sidebar!" });
 		//
-		const slotDuration = "00:30:00"; // 週表示した時の時間軸の単位。
+		const slotDuration: Duration = {
+			years: 0,
+			months: 0,
+			days: 0,
+			milliseconds: 1000 * 60 * 30, //30min
+		};
 		const slotMinTime = "07:00:00";
 		const slotMaxTime = "21:00:00";
 
@@ -308,7 +320,8 @@ export class MySidebarView extends ItemView {
 		 */
 		this.registerEvent(
 			this.app.metadataCache.on("resolved", () => {
-				console.log("fire resolved");
+				this.isCacheResolving = true;
+				console.log("🔥fire resolved");
 				for (const file of this.app.vault.getMarkdownFiles()) {
 					const cache = this.app.metadataCache.getFileCache(file);
 					if (cache) {
@@ -318,6 +331,7 @@ export class MySidebarView extends ItemView {
 						console.warn(`キャッシュ未生成: ${file.path}`);
 					}
 				}
+				this.isCacheResolving = false;
 			})
 		);
 
@@ -376,6 +390,7 @@ export class MySidebarView extends ItemView {
 			this.calendar.updateSize(); // ← 高さ・幅を再計算して再描画
 		});
 		resizeObserver.observe(parentElement);
+		//
 		/**
 		 * eventcontent in calendar
 		 * @param arg
@@ -383,40 +398,14 @@ export class MySidebarView extends ItemView {
 		 */
 		const EventContentElement = (arg: any) => {
 			const cEventInfoObj = arg.event;
-			const file = this.getCEventInfoProps(cEventInfoObj, "file"); //arg.event.extendedProps.file;
-			const position = this.getCEventInfoProps(cEventInfoObj, "posision"); //arg.event.extendedProps.position;
+			const file: TFile = this.getCEventInfoProps(cEventInfoObj, "file"); //arg.event.extendedProps.file;
+			const position = this.getCEventInfoProps(cEventInfoObj, "position"); //arg.event.extendedProps.position;
 			const title = this.getCEventInfoProps(cEventInfoObj, "title");
 
 			// HTML要素を作成
 			const eventContainer = document.createElement("div");
 			const titleElement = document.createElement("span");
 			//
-			const jump = (e: any) => {
-				let activeLeaf: WorkspaceLeaf | null = null;
-				const leaves = this.app.workspace.getLeavesOfType("markdown");
-				for (const leaf of leaves) {
-					if (
-						leaf.view instanceof MarkdownView &&
-						leaf.view.file?.path === file.path
-					) {
-						activeLeaf = leaf;
-						break;
-					}
-				}
-				if (activeLeaf === null) {
-					activeLeaf = this.app.workspace.getLeaf(true);
-				}
-				this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
-				activeLeaf.openFile(file).then((_) => {
-					const editor = this.app.workspace.activeEditor?.editor;
-					if (editor) {
-						editor.setCursor({
-							line: position.start.line,
-							ch: 0,
-						}); // 15行目の先頭にカーソルを移動
-					}
-				});
-			};
 			titleElement.textContent = title;
 			titleElement.classList.add(
 				"my-event-title",
@@ -424,10 +413,10 @@ export class MySidebarView extends ItemView {
 				"cm-hmd-internal-link",
 				"is-live-preview"
 			);
-			titleElement.addEventListener("click", jump.bind(this));
-			titleElement.dataset.notepath =
-				(this.getCEventInfoProps(cEventInfoObj, "file") as TFile)
-					.path || "";
+			titleElement.addEventListener("click", (_) => {
+				this.jumpToFilePosition(file, position);
+			});
+			titleElement.dataset.notepath = file.path || "";
 
 			eventContainer.appendChild(titleElement);
 			eventContainer.classList.add("my-event-container");
@@ -455,14 +444,18 @@ export class MySidebarView extends ItemView {
 				...selection,
 			})}`;
 			if (!navigator.clipboard) {
-				alert("残念。このブラウザは対応していません...");
+				alert(
+					"残念。このブラウザはクリップボードに対応していません..."
+				);
 				return;
 			}
 
 			navigator.clipboard.writeText(dateRangeString).then(
 				() => {
 					//alert(`コピー成功👍:${dateRangeString}`);
-					new Notice(`コピー成功\n${dateRangeString}`);
+					new Notice(
+						`日付文字列をコピーしました\n${dateRangeString}`
+					);
 				},
 				() => {
 					alert("コピー失敗😭");
@@ -552,19 +545,19 @@ export class MySidebarView extends ItemView {
 	}
 
 	async fetchEvents() {
-		console.log(">>> fetchEvents");
-		const sTasks = await this.getSTasks.bind(this)();
-		console.log("<<< fetchEvents:", sTasks);
+		console.log(enterMsg("fetchEvents"));
+		const sTasks = await this.getSTasks();
+		console.log(exitMsg("fetchEvents:"), sTasks);
 		return sTasks;
 	}
 
 	async rerendarCalendar(from: any = undefined) {
-		console.log(">>> rerendarCalendar", from);
+		console.log(enterMsg("rerendarCalendar"), from);
 		if (this.calendar) {
 			this.calendar.refetchEvents();
 			this.calendar.render();
 		}
-		console.log("<<< rerendarCalendar", from);
+		console.log(exitMsg("rerendarCalendar"), from);
 	}
 
 	/**
@@ -602,12 +595,33 @@ export class MySidebarView extends ItemView {
 		return cEventInfoObj.extendedProps[propname];
 	}
 
+	isValidSTask(
+		sTask: T_STask | null | undefined,
+		banStates: string[] = ["x"],
+		essentialParams: string[] = [],
+		isAcceptError = false
+	): sTask is T_STask {
+		if (!sTask) {
+			return false;
+		}
+		if (banStates.some((state) => state === sTask.state)) {
+			return false;
+		}
+		if (essentialParams.some((param) => !(param in sTask))) {
+			return false;
+		}
+		if (!isAcceptError && sTask.error && sTask.error.length !== 0) {
+			return false;
+		}
+		return true;
+	}
+
 	/**
 	 * 全mdファイルの指定emojiを持つタスクを取得する
 	 * @returns
 	 */
 	async getSTasks() {
-		console.log(">>> getSTasks");
+		console.log(enterMsg("getSTasks"));
 		//
 		//最新のmeta情報を取得
 		//
@@ -617,14 +631,16 @@ export class MySidebarView extends ItemView {
 				return this.app.vault.read(file);
 			})
 		);
+		const caches = await Promise.all(
+			files.map((file) => {
+				return this.getCache(file);
+			})
+		);
 		const metas = files.reduce((dict, file, i) => {
 			const filename: string = file.basename;
 			dict[filename] = {
 				file,
-				cache:
-					this.app.metadataCache.getFileCache(file) ||
-					this.cachedCache[file.basename] ||
-					null,
+				cache: caches[i],
 				content: pageContents[i],
 			};
 			return dict;
@@ -649,14 +665,14 @@ export class MySidebarView extends ItemView {
 							file,
 							content
 						);
-						return sTask;
+						return this.isValidSTask(sTask) ? sTask : null;
 					})
 					.filter((a: any) => a !== null);
 				return sTasksInPage;
 			})
 			.flat();
 		//
-		console.log("<<< getSTasks", sTasks);
+		console.log(exitMsg("getSTasks"), sTasks);
 		return sTasks;
 	}
 
@@ -669,14 +685,14 @@ export class MySidebarView extends ItemView {
 	 * @returns
 	 */
 	createSTask(
-		item: any,
+		item: ListItemCache,
 		headings: any,
 		file: any,
 		content: string
 	): T_STask | null {
 		let sTask: T_STask | null = null;
 		// 各リスト項目を順に処理
-		if (item.task && !item.checked) {
+		if (item.task) {
 			// 最も近い見出しを取得
 			const header = this.findNearestHeader(
 				item.position.start.line,
@@ -696,37 +712,44 @@ export class MySidebarView extends ItemView {
 					? st[0]
 					: { text: "", _dateRange: undefined };
 			*/
+			let error: any = [];
 			const parsedLine = parseTaskLine(linetext);
+			if (!parsedLine) {
+				error.push(`parse失敗:${linetext}`);
+			}
+			let dateRange = null;
 			const targetTag =
 				parsedLine?.tags.filter((tag) => tag.prefix === this.emoji) ||
 				[];
-			if (parsedLine && targetTag.length > 0) {
-				if (targetTag.length !== 1) {
-					console.error(
-						`tag${this.emoji}が複数付けられています（${linetext}）`
-					);
-				} else {
-					const dateRange = toDateRangeFromDateString(
-						targetTag[0].value
-					);
-					sTask = {
-						title: parsedLine.taskText,
-						linetext,
-						parsedLine,
-						header,
-						link,
-						file,
-						position: item.position,
-						start: dateRange?.start || undefined,
-						end: dateRange?.end || undefined,
-						allDay: !dateRange?.end,
-					};
-
-					console.debug(`タスク:`, sTask); // タスクの内容を出力
-					console.debug(`→ 属する見出し: ${header}`);
-					console.debug(`→ ヘッダーリンク: ${link}`);
-				}
+			if (targetTag.length === 0) {
+				error.push(`指定されたタグがありません(${this.emoji})`);
+			} else if (targetTag.length !== 1) {
+				error.push(
+					`指定されたタグが複数付けられています(${this.emoji})`
+				);
+			} else {
+				dateRange = toDateRangeFromDateString(targetTag[0].value);
 			}
+			//
+			sTask = {
+				title: parsedLine?.taskText || "",
+				linetext,
+				parsedLine,
+				state: parsedLine?.checkboxState || "",
+				header,
+				link,
+				file,
+				position: item.position,
+				start: dateRange?.start || undefined,
+				end: dateRange?.end || undefined,
+				allDay: !dateRange?.end,
+				error,
+			};
+
+			console.debug(`タスク:`, sTask); // タスクの内容を出力
+			console.debug(`→ 属する見出し: ${header}`);
+			console.debug(`→ ヘッダーリンク: ${link}`);
+			console.debug("error:", error);
 		}
 		return sTask;
 	}
@@ -795,7 +818,36 @@ export class MySidebarView extends ItemView {
 		return header ? `[[${fileName}#${header}]]` : `[[${fileName}]]`;
 	}
 
+	jumpToFilePosition(destFile: TFile, destPosition: Pos) {
+		let activeLeaf: WorkspaceLeaf | null = null;
+		const leaves = this.app.workspace.getLeavesOfType("markdown");
+		for (const leaf of leaves) {
+			if (
+				leaf.view instanceof MarkdownView &&
+				leaf.view.file?.path === destFile.path
+			) {
+				activeLeaf = leaf;
+				break;
+			}
+		}
+		if (activeLeaf === null) {
+			activeLeaf = this.app.workspace.getLeaf(true);
+		}
+		this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
+		activeLeaf.openFile(destFile).then((_) => {
+			const editor = this.app.workspace.activeEditor?.editor;
+			if (editor) {
+				editor.setCursor({
+					line: destPosition.start.line,
+					ch: 0,
+				}); // 15行目の先頭にカーソルを移動
+			}
+		});
+	}
+
 	async onDrop(e: any) {
+		console.log(enterMsg("onDrop"));
+		//
 		e.preventDefault();
 		//
 		if (!this.upperThis.obisidianLastClickedEvent) {
@@ -836,7 +888,12 @@ export class MySidebarView extends ItemView {
 		//
 		if (timeAtDropped !== "" && dateAtDropped !== "") {
 			const startDate = new Date(`${dateAtDropped}T${timeAtDropped}`);
-			const endDate = new Date(startDate.getTime() + 1 * 60 * 60 * 1000);
+			const slotDurationMilliseconds =
+				(this.calendar.getOption("slotDuration") as Duration)
+					?.milliseconds || 1000 * 60 * 30;
+			const endDate = new Date(
+				startDate.getTime() + slotDurationMilliseconds
+			);
 			const dateRange = { start: startDate, end: endDate };
 			const dateRangeStr = toDateStringFromDateRange(dateRange);
 			//
@@ -869,14 +926,11 @@ export class MySidebarView extends ItemView {
 				};
 				console.debug("選択されたposition:", departureSelectedPosition);
 				//
-				const cache =
-					this.app.metadataCache.getFileCache(departureFile) ||
-					this.cachedCache[departureFile.basename] ||
-					null;
+				const cache = await this.getCache(departureFile);
 				const content = await this.app.vault.read(departureFile);
 				const headings = cache?.headings ?? [];
 				const listItems = cache?.listItems ?? [];
-				let sTasks: T_STask[] = [];
+				let targetItems: ListItemCache[] = [];
 				for (let item of listItems) {
 					console.debug(
 						`(${item.position.start.offset} <= ${departureSelectedPosition.start.offset} && ${departureSelectedPosition.start.offset} <= ${item.position.end.offset}) || (${item.position.start.offset} <= ${departureSelectedPosition.end.offset} && ${departureSelectedPosition.start.offset} <= ${item.position.end.offset})`
@@ -891,6 +945,7 @@ export class MySidebarView extends ItemView {
 							departureSelectedPosition.start.offset <=
 								item.position.end.offset)
 					) {
+						/*del *
 						const sTask = this.createSTask(
 							item,
 							headings,
@@ -898,39 +953,71 @@ export class MySidebarView extends ItemView {
 							content
 						);
 						if (sTask) {
-							sTasks.push(sTask);
+							targetSTasks.push(sTask);
 						}
+						*/
+						targetItems.push(item);
 					}
 				}
-				console.log("dropped sTasks:", sTasks);
+				console.log("dropped items:", targetItems);
 
 				let newContent = content;
-				sTasks
+				targetItems
 					.sort(
 						(a, b) => b.position.end.offset - a.position.end.offset
 					)
-					.forEach((sTask) => {
-						const { parsedLine } = sTask;
-						parsedLine.tags = parsedLine.tags.map((tag) => {
-							if (tag.prefix === this.emoji) {
-								tag.value = dateRangeStr;
+					.forEach((item) => {
+						let sTask = this.createSTask(
+							item,
+							headings,
+							departureFile,
+							content
+						);
+						if (
+							this.isValidSTask(
+								sTask,
+								["x"],
+								["parsedLine"],
+								true
+							) &&
+							sTask.parsedLine
+						) {
+							const { parsedLine } = sTask;
+							if (
+								parsedLine.tags.some(
+									(tag) => tag.prefix === this.emoji
+								)
+							) {
+								parsedLine.tags = parsedLine.tags.map((tag) => {
+									if (tag.prefix === this.emoji) {
+										tag.value = dateRangeStr;
+									}
+									return tag;
+								});
+							} else {
+								parsedLine.tags.push({
+									leading: " ",
+									prefix: this.emoji,
+									space: " ",
+									value: dateRangeStr,
+								});
 							}
-							return tag;
-						});
-						newContent = `${newContent.slice(
-							0,
-							sTask.position.start.offset
-						)}${rebuildTaskLine(parsedLine)}${newContent.slice(
-							sTask.position.end.offset
-						)}`;
-						/*
-						newContent = `${newContent.slice(
-							0,
-							sTask.position.end.offset
-						)} ${this.emoji} ${dateRangeStr}${newContent.slice(
-							sTask.position.end.offset
-						)}`;
-						*/
+							const newLinetext = rebuildTaskLine(parsedLine);
+							newContent = `${newContent.slice(
+								0,
+								sTask.position.start.offset
+							)}${newLinetext}${newContent.slice(
+								sTask.position.end.offset
+							)}`;
+							/*
+							newContent = `${newContent.slice(
+								0,
+								sTask.position.end.offset
+							)} ${this.emoji} ${dateRangeStr}${newContent.slice(
+								sTask.position.end.offset
+							)}`;
+							*/
+						}
 					});
 				// ファイルを上書き保存
 				await this.app.vault.modify(departureFile, newContent);
@@ -951,6 +1038,7 @@ export class MySidebarView extends ItemView {
 						*/
 			}
 		}
+		console.log(exitMsg("onDrop"));
 	}
 
 	onMoveCalenderEvent = async (
@@ -975,27 +1063,39 @@ export class MySidebarView extends ItemView {
 			}
 		}
 		const fcEvent = info.event;
-		const start = toDatePropsFromDate(
-			this.getCEventInfoProps(fcEvent, "start")
-		);
-		const end = toDatePropsFromDate(
-			this.getCEventInfoProps(fcEvent, "end")
-		);
+		const start =
+			(this.getCEventInfoProps(fcEvent, "start") as Date) || null;
+		const end = (this.getCEventInfoProps(fcEvent, "end") as Date) || null;
 		if (start && end) {
-			const s = `${toDateStringFromDateProps(start)}${
-				DATETIME_CONSTANT.DATERANGE_SPARATOR_STR
-			}${toDateStringFromDateProps(end)}`;
+			const dateRangeStr = toDateStringFromDateRange({ start, end });
 
+			/*del *
 			const taskRegExp = this.getScheduledTaskRegExp(this.emoji);
 			const linetext = this.getCEventInfoProps(fcEvent, "linetext");
 			const newLinetext = linetext.replace(
 				taskRegExp,
 				`$1$2$3$4$5$6${s}`
 			);
+			*/
 			//
-			const file = this.getCEventInfoProps(fcEvent, "file");
+			const parsedLine = this.getCEventInfoProps(
+				fcEvent,
+				"parsedLine"
+			) as T_ParsedTask;
+			parsedLine.tags.map((tag) => {
+				if (tag.prefix === this.emoji) {
+					tag.value = dateRangeStr;
+				}
+				return tag;
+			});
+			const newLinetext = rebuildTaskLine(parsedLine);
+			//
+			const file = this.getCEventInfoProps(fcEvent, "file") as TFile;
 			let content = await this.app.vault.read(file);
-			const position = this.getCEventInfoProps(fcEvent, "position");
+			const position = this.getCEventInfoProps(
+				fcEvent,
+				"position"
+			) as Pos;
 			content = `${content.slice(
 				0,
 				position.start.offset
@@ -1005,4 +1105,32 @@ export class MySidebarView extends ItemView {
 			this.rerendarCalendar("onMoveCalenderEvent");
 		}
 	};
+
+	async getCache(
+		file: TFile,
+		retryCount = 0,
+		maxRetryCount = 4
+	): Promise<CachedMetadata | null> {
+		let cache = this.app.metadataCache.getFileCache(file);
+		if (cache) {
+			return cache;
+		} /*
+		cache = this.cachedCache[file.basename];
+		if (cache) {
+			console.log("CACHE:cached cache", file, cache);
+			return cache;
+		}
+			*/
+		if (retryCount < maxRetryCount) {
+			console.log(
+				`CACHE:retry(${retryCount}/${maxRetryCount})`,
+				file,
+				cache
+			);
+			await new Promise((_) => setTimeout(_, 250));
+			return this.getCache(file, retryCount + 1, maxRetryCount);
+		}
+		console.log("CACHE: null", file, cache);
+		return null;
+	}
 }
