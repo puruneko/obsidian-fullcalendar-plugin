@@ -14,6 +14,7 @@ import {
 	IconName,
 	CachedMetadata,
 	Pos,
+	MarkdownRenderer,
 } from "obsidian";
 //
 import {
@@ -76,6 +77,9 @@ type T_STask = {
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 	obisidianLastClickedEvent: any = null;
+	//
+	private clickHandler: (evt: MouseEvent) => void;
+	//
 
 	async onload() {
 		await this.loadSettings();
@@ -95,17 +99,18 @@ export default class MyPlugin extends Plugin {
 		});
 		//
 		//
-		this.registerDomEvent(document, "click", (evt: MouseEvent) => {
+		this.clickHandler = (evt: MouseEvent) => {
 			console.log("click", evt);
 			//クリックされたときのイベントオブジェクトを取っておく
 			this.obisidianLastClickedEvent = evt;
 
 			//this.rerendarCalendar.bind(this)("this.registerDomEvent");
-		});
+		};
+		this.registerDomEvent(document, "click", this.clickHandler);
 		//
 		//
 
-		/*
+		/*del *
 
 		//
 		//  This creates an icon in the left ribbon.
@@ -181,7 +186,9 @@ export default class MyPlugin extends Plugin {
 	//
 	//
 
-	onunload() {}
+	onunload() {
+		document.removeEventListener("click", this.clickHandler);
+	}
 
 	async loadSettings() {
 		this.settings = Object.assign(
@@ -263,6 +270,9 @@ export class MySidebarView extends ItemView {
 	};
 	emoji = "⏳";
 	upperThis: any;
+	//
+	private mouseoverHandler: (evt: MouseEvent) => void;
+	//
 
 	constructor(leaf: WorkspaceLeaf, upperThis: any) {
 		super(leaf);
@@ -312,6 +322,46 @@ export class MySidebarView extends ItemView {
 		);
 
 		//
+		this.mouseoverHandler = (async (evt: any) => {
+			const target = evt.target as HTMLElement;
+			if (!evt.ctrlKey || !target.classList.contains("my-event-title"))
+				return;
+
+			const path = target.dataset.notepath;
+			if (!path) return;
+
+			const file = this.app.vault.getAbstractFileByPath(path);
+			if (!(file instanceof TFile)) return;
+
+			const hoverEl = document.createElement("div");
+			hoverEl.className = "fc-preview-hover";
+			Object.assign(hoverEl.style, {
+				position: "absolute",
+				top: `${evt.clientY + 10}px`,
+				left: `${evt.clientX + 10}px`,
+				zIndex: "9999",
+				padding: "8px",
+				background: "var(--background-primary)",
+				border: "1px solid var(--background-modifier-border)",
+				maxWidth: "400px",
+				boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+			});
+
+			document.body.appendChild(hoverEl);
+			const content = await this.app.vault.read(file);
+			await MarkdownRenderer.renderMarkdown(content, hoverEl, path, this);
+
+			const leaveHandler = () => {
+				hoverEl.remove();
+				target.removeEventListener("mouseleave", leaveHandler);
+			};
+			target.addEventListener("mouseleave", leaveHandler);
+		}).bind(this);
+		document.addEventListener("mouseover", this.mouseoverHandler);
+		//
+		//
+
+		//
 		//wrapper settings
 		//
 		const calendarEl = document.createElement("div");
@@ -331,13 +381,15 @@ export class MySidebarView extends ItemView {
 		 * @param arg
 		 * @returns
 		 */
-		const eventContent = (arg: any) => {
-			const file = arg.event.extendedProps.file;
-			const position = arg.event.extendedProps.position;
+		const EventContentElement = (arg: any) => {
+			const cEventInfoObj = arg.event;
+			const file = this.getCEventInfoProps(cEventInfoObj, "file"); //arg.event.extendedProps.file;
+			const position = this.getCEventInfoProps(cEventInfoObj, "posision"); //arg.event.extendedProps.position;
+			const title = this.getCEventInfoProps(cEventInfoObj, "title");
 
 			// HTML要素を作成
-			const container = document.createElement("div");
-			const link = document.createElement("span");
+			const eventContainer = document.createElement("div");
+			const titleElement = document.createElement("span");
 			//
 			const jump = (e: any) => {
 				let activeLeaf: WorkspaceLeaf | null = null;
@@ -365,12 +417,21 @@ export class MySidebarView extends ItemView {
 					}
 				});
 			};
-			link.textContent = arg.event.title;
-			link.classList.add("fc-internal-link");
-			link.addEventListener("click", jump.bind(this));
+			titleElement.textContent = title;
+			titleElement.classList.add(
+				"my-event-title",
+				"fc-internal-link",
+				"cm-hmd-internal-link",
+				"is-live-preview"
+			);
+			titleElement.addEventListener("click", jump.bind(this));
+			titleElement.dataset.notepath =
+				(this.getCEventInfoProps(cEventInfoObj, "file") as TFile)
+					.path || "";
 
-			container.appendChild(link);
-			return { domNodes: [container] };
+			eventContainer.appendChild(titleElement);
+			eventContainer.classList.add("my-event-container");
+			return { domNodes: [eventContainer] };
 		};
 		//
 		//event drag handler
@@ -477,7 +538,7 @@ export class MySidebarView extends ItemView {
 			//eventReceive: handleElementDroppedOnCalendar.bind(this),
 			//
 			events: this.fetchEvents.bind(this), //sTasks,
-			eventContent,
+			eventContent: EventContentElement,
 		});
 
 		this.calendar.render();
@@ -485,6 +546,9 @@ export class MySidebarView extends ItemView {
 
 	async onClose() {
 		// クリーンアップ処理があればここに
+	}
+	onunload(): void {
+		document.removeEventListener("mouseover", this.mouseoverHandler);
 	}
 
 	async fetchEvents() {
@@ -625,11 +689,13 @@ export class MySidebarView extends ItemView {
 				item.position.start.offset,
 				item.position.end.offset
 			);
+			/*del*
 			const st = this.extractScheduledTasks(linetext, this.emoji);
 			const _ =
 				st && st.length > 0
 					? st[0]
 					: { text: "", _dateRange: undefined };
+			*/
 			const parsedLine = parseTaskLine(linetext);
 			const targetTag =
 				parsedLine?.tags.filter((tag) => tag.prefix === this.emoji) ||
@@ -659,7 +725,6 @@ export class MySidebarView extends ItemView {
 					console.debug(`タスク:`, sTask); // タスクの内容を出力
 					console.debug(`→ 属する見出し: ${header}`);
 					console.debug(`→ ヘッダーリンク: ${link}`);
-					console.debug(`→ st: ${st}`);
 				}
 			}
 		}
@@ -673,6 +738,7 @@ export class MySidebarView extends ItemView {
 	//
 	//
 
+	/*del *
 	extractScheduledTasks(content: string, emoji: string) {
 		//
 		//
@@ -710,6 +776,8 @@ export class MySidebarView extends ItemView {
 			})
 			.filter((task) => task !== null);
 	}
+	*/
+
 	findNearestHeader(
 		lineNumber: number,
 		headings: { heading: string; position: { start: { line: number } } }[]
